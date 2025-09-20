@@ -6,7 +6,7 @@ use crossterm::{
     ExecutableCommand,
 };
 use lru::LruCache;
-use regex::{RegexBuilder, Regex};
+use regex::RegexBuilder;
 use std::fs;
 use std::io::{stdout, Write};
 use std::num::NonZeroUsize;
@@ -25,7 +25,6 @@ fn main() -> std::io::Result<()> {
     let mut query = String::new();
     let files = collect_text_files();
     let mut content_cache = LruCache::new(NonZeroUsize::new(100).expect("Cache size must be non-zero"));
-    let mut last_results: Vec<(String, String, Vec<(usize, usize)>)> = Vec::new();
     let mut current_results: Vec<(String, String, Vec<(usize, usize)>)> = Vec::new();
     let mut results_start_row = 2;
     let (terminal_width, terminal_height) = size()?;
@@ -122,9 +121,9 @@ fn main() -> std::io::Result<()> {
                 match code {
                     KeyCode::Esc => break,
                     KeyCode::Enter => {
-                        last_results = current_results.clone();
+                        let last_results_len = current_results.len();
                         query.clear();
-                        results_start_row = last_results.len() as u16 + 3;
+                        results_start_row = last_results_len as u16 + 3;
                         for i in 0..(terminal_height - 3) {
                             stdout
                                 .execute(MoveTo(0, results_start_row + i as u16))?
