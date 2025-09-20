@@ -13,8 +13,24 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::Duration;
 use walkdir::{WalkDir, DirEntry};
+use clap::Parser;
+
+/// Simple dynamic grep tool emulating neovim's telescope plugin
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Case sensitivity of the regular expression search
+    #[arg(short, long, default_value_t = false)]
+    insensitive_to_case : bool,
+
+    /// Extensions of files to search
+    #[arg(short, long, value_delimiter = ',', num_args = 0..)]
+    extensions : Option<Vec<String>>,
+}
 
 fn main() -> std::io::Result<()> {
+    let args = Args::parse();
+
     // Enable raw mode to capture key events
     terminal::enable_raw_mode()?;
     let mut stdout = stdout();
@@ -23,7 +39,7 @@ fn main() -> std::io::Result<()> {
     stdout.execute(Clear(ClearType::All))?.execute(MoveTo(0, 0))?;
 
     let mut query = String::new();
-    let files = collect_text_files();
+    let files = collect_text_files(&args);
     let mut content_cache = LruCache::new(NonZeroUsize::new(100).expect("Cache size must be non-zero"));
     let mut current_results: Vec<(String, String, Vec<(usize, usize)>)> = Vec::new();
     let mut results_start_row = 2;
@@ -45,7 +61,7 @@ fn main() -> std::io::Result<()> {
             .execute(MoveTo(8 + query.len() as u16, 0))?; // Move cursor to end of query
 
         // Update results if changed
-        let new_results = search_file_contents(&files, &query, &mut content_cache, terminal_width);
+        let new_results = search_file_contents(&files, &query, &mut content_cache, terminal_width, &args);
         if new_results != current_results {
             current_results = new_results;
 
@@ -173,7 +189,7 @@ fn is_not_hidden(entry: &DirEntry) -> bool {
     }
 }
 
-fn collect_text_files() -> Vec<String> {
+fn collect_text_files(args : &Args) -> Vec<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(".")
         .into_iter()
@@ -182,7 +198,7 @@ fn collect_text_files() -> Vec<String> {
         .filter(|e| e.path().is_file())
     {
         let path = entry.path();
-        if is_text_file(path) {
+        if is_text_file(path, args) {
             if let Some(path_str) = path.to_str() {
                 files.push(path_str.to_string());
             }
@@ -196,10 +212,16 @@ const TEXT_EXTENSIONS: &[&str] = &[
     "bash", "cpp", "c", "h", "java", "go", "rb", "php", "sql",
 ];
 
-fn is_text_file(path: &Path) -> bool {
+fn is_text_file(path: &Path, args : &Args) -> bool {
+    let extensions_to_use: Vec<String> = args
+            .extensions
+            .clone()
+            .unwrap_or_else(|| TEXT_EXTENSIONS.iter().map(|&s| s.to_string()).collect());
+
+    // Check if the file's extension is in the list
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| TEXT_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .map(|ext| extensions_to_use.iter().any(|e| e.to_lowercase() == ext.to_lowercase()))
         .unwrap_or(false)
 }
 
@@ -208,6 +230,7 @@ fn search_file_contents(
     query: &str,
     content_cache: &mut LruCache<String, String>,
     terminal_width: usize,
+    args : &Args
 ) -> Vec<(String, String, Vec<(usize, usize)>)> {
     if query.is_empty() {
         return files
@@ -217,7 +240,7 @@ fn search_file_contents(
     }
 
     let re = match RegexBuilder::new(query)
-        .case_insensitive(true)
+        .case_insensitive(args.insensitive_to_case)
         .build()
     {
         Ok(regex) => regex,
